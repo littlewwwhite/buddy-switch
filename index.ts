@@ -823,6 +823,51 @@ function cmdRestore() {
   console.log(`  ${S.dim}Restart Claude Code, then /buddy to re-hatch.${S.reset}\n`);
 }
 
+function cmdDebug() {
+  const binPath = findBinaryPath();
+  const bin = readFileSync(binPath);
+  const sizeMB = (bin.length / 1048576).toFixed(1);
+  const head = bin.subarray(0, 4).toString("hex");
+
+  console.log(`\n  ${S.bold}Debug Info${S.reset}`);
+  console.log(`  ${S.dim}path${S.reset}   ${binPath}`);
+  console.log(`  ${S.dim}size${S.reset}   ${sizeMB} MB`);
+  console.log(`  ${S.dim}magic${S.reset}  ${head}`);
+  console.log(`  ${S.dim}user${S.reset}   ${getUserId()}`);
+
+  // Search for "friend-" occurrences
+  const prefix = Buffer.from("friend-");
+  const hits: string[] = [];
+  let idx = 0;
+  while (hits.length < 20) {
+    idx = bin.indexOf(prefix, idx);
+    if (idx === -1) break;
+    const snippet = bin.subarray(idx, Math.min(idx + 40, bin.length)).toString("utf8").replace(/[^\x20-\x7e]/g, ".");
+    hits.push(`    @0x${idx.toString(16).padStart(8, "0")}  ${snippet}`);
+    idx += prefix.length;
+  }
+
+  console.log(`\n  ${S.bold}"friend-" occurrences: ${hits.length}${S.reset}`);
+  if (hits.length > 0) hits.forEach((h) => console.log(h));
+  else console.log(`    (none found)`);
+
+  // Search for SALT_PATTERN matches
+  const saltInfo = findSaltInBinary(bin);
+  console.log(`\n  ${S.bold}SALT match:${S.reset} ${saltInfo ? `${S.green}${saltInfo.salt}${S.reset} (${saltInfo.length} chars)` : `${S.red}none${S.reset}`}`);
+
+  // Also search for UTF-16LE "friend-" (in case it's stored as wide string)
+  const prefix16 = Buffer.from("friend-", "utf16le");
+  const idx16 = bin.indexOf(prefix16);
+  if (idx16 !== -1) {
+    console.log(`  ${S.yellow}Found "friend-" as UTF-16LE at 0x${idx16.toString(16)}${S.reset}`);
+  }
+
+  // Show state file
+  const state = loadState();
+  console.log(`\n  ${S.bold}State:${S.reset} ${state ? JSON.stringify(state) : "(none)"}`);
+  console.log(``);
+}
+
 // ─── Token Parser ────────────────────────────────────────
 
 function parseTokens(tokens: string[]): { rarity?: string; species?: string; hat?: string; shiny?: boolean; salt?: string } {
@@ -874,6 +919,7 @@ switch (cmd) {
   case "list": case "ls":   cmdList(args.slice(1)); break;
   case "set":  case "use":  cmdSet(args.slice(1)); break;
   case "restore": case "reset": cmdRestore(); break;
+  case "debug":             cmdDebug(); break;
   case "-h": case "--help": case "help": usage(); break;
   default:
     if (args.length === 0 && isTTY) cmdInteractive();
