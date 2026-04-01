@@ -1,0 +1,19 @@
+{
+  "name": "buddy-switch",
+  "version": "0.1.0",
+  "description": "Customize your Claude Code buddy pet",
+  "type": "module",
+  "bin": {
+    "buddy": "./index.ts"
+  },
+  "files": [
+    "index.ts"
+  ],
+  "keywords": [
+    "claude-code",
+    "buddy",
+    "pet",
+    "customize"
+  ],
+  "license": "MIT"
+}
