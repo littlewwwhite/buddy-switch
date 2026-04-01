@@ -4,9 +4,10 @@
   "description": "Customize your Claude Code buddy pet",
   "type": "module",
   "bin": {
-    "buddy": "./index.ts"
+    "buddy": "./cli.js"
   },
   "files": [
+    "cli.js",
     "index.ts"
   ],
   "keywords": [
