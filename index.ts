@@ -148,16 +148,56 @@ function buildCatalog(userId: string, saltLen: number): Pet[] {
 // ─── Binary & Config ─────────────────────────────────────
 
 function findBinaryPath(): string {
+  // 1. Try `which claude` → resolve symlinks
   try {
     const w = execSync("which claude", { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
     const p = realpathSync(w);
-    if (!existsSync(p)) throw new Error();
-    return p;
-  } catch {
-    console.error(`\n  ${S.red}Cannot find Claude Code binary.${S.reset}`);
-    console.error(`  ${S.dim}Ensure 'claude' is installed and in PATH.${S.reset}\n`);
-    process.exit(1);
+    if (existsSync(p)) {
+      // Check if this is a real binary or a JS/shell wrapper
+      const head = readFileSync(p, { encoding: null }).subarray(0, 4);
+      const isMachO = head[0] === 0xcf && head[1] === 0xfa;
+      const isELF = head[0] === 0x7f && head[1] === 0x45;
+      if (isMachO || isELF) return p;
+
+      // It's a text wrapper (npm install, shell script, etc.)
+      // Try to find the real binary from known locations
+      const real = findNativeBinary();
+      if (real) return real;
+
+      // Last resort: use the wrapper path (will fail at SALT scan with a helpful message)
+      return p;
+    }
+  } catch {}
+
+  // 2. Fallback to known install locations
+  const real = findNativeBinary();
+  if (real) return real;
+
+  console.error(`\n  ${S.red}Cannot find Claude Code binary.${S.reset}`);
+  console.error(`  ${S.dim}Ensure 'claude' is installed and in PATH.${S.reset}\n`);
+  process.exit(1);
+}
+
+function findNativeBinary(): string | null {
+  // Check ~/.local/share/claude/versions/<latest>
+  const versionsDir = resolve(homedir(), ".local", "share", "claude", "versions");
+  if (existsSync(versionsDir)) {
+    try {
+      const entries = execSync(`ls -1 "${versionsDir}"`, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+      // Sort semver-ish descending, pick latest
+      entries.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const v of entries) {
+        const p = resolve(versionsDir, v);
+        if (existsSync(p)) {
+          const head = readFileSync(p, { encoding: null }).subarray(0, 4);
+          const isMachO = head[0] === 0xcf && head[1] === 0xfa;
+          const isELF = head[0] === 0x7f && head[1] === 0x45;
+          if (isMachO || isELF) return p;
+        }
+      }
+    } catch {}
   }
+  return null;
 }
 
 function getBinaryVersion(binPath: string): string | null {
@@ -191,7 +231,7 @@ function clearCompanionSoul() {
   writeFileSync(CLAUDE_CONFIG, JSON.stringify(cfg, null, 2) + "\n");
 }
 
-function findSaltInBinary(bin: Buffer): { salt: string; length: number } {
+function findSaltInBinary(bin: Buffer): { salt: string; length: number } | null {
   const prefix = Buffer.from("friend-");
   let idx = 0;
   while (true) {
@@ -207,7 +247,7 @@ function findSaltInBinary(bin: Buffer): { salt: string; length: number } {
     if (SALT_PATTERN.test(salt)) return { salt, length: end - idx };
     idx = end;
   }
-  throw new Error("SALT pattern not found in binary.");
+  return null;
 }
 
 function patchBinary(binPath: string, oldSalt: string, newSalt: string): number {
@@ -473,6 +513,25 @@ function getCurrentInfo() {
   const userId = getUserId();
   const bin = readFileSync(binPath);
   const saltInfo = findSaltInBinary(bin);
+
+  if (!saltInfo) {
+    const sizeMB = (bin.length / 1048576).toFixed(1);
+    const head4 = bin.subarray(0, 4).toString("hex");
+    console.error(`\n  ${S.red}SALT pattern not found in binary.${S.reset}`);
+    console.error(`  ${S.dim}path${S.reset}  ${binPath}`);
+    console.error(`  ${S.dim}size${S.reset}  ${sizeMB} MB  ${S.dim}magic${S.reset} ${head4}`);
+    console.error(``);
+    console.error(`  Possible causes:`);
+    console.error(`    1. Claude Code was installed via npm — the JS wrapper has no SALT`);
+    console.error(`    2. Your Claude Code version doesn't include the buddy feature yet`);
+    console.error(`    3. The binary format changed in a newer version`);
+    console.error(``);
+    console.error(`  ${S.dim}If installed via npm, try the native installer:${S.reset}`);
+    console.error(`  ${S.dim}  curl -fsSL https://claude.ai/install.sh | sh${S.reset}`);
+    console.error(``);
+    process.exit(1);
+  }
+
   const pet = fullRoll(userId, saltInfo.salt);
   const state = loadState();
   const cfg = readClaudeConfig();
